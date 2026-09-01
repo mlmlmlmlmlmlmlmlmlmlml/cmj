@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>CMJ 测力台</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  color: #eee; margin: 0; padding: 20px;
+  display: flex; flex-direction: column; align-items: center;
+}
+h1 { color: #00d4ff; font-size: 1.3em; margin: 0 0 10px; }
+.card {
+  background: rgba(255,255,255,0.06); border-radius: 16px;
+  padding: 16px 20px; margin: 6px 0; width: 360px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.08);
+}
+.label { color: #888; font-size: 0.75em; margin-bottom: 2px; }
+.val { color: #00ff88; font-size: 1.15em; font-variant-numeric: tabular-nums; }
+.raw { color: #666; font-size: 0.8em; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+canvas {
+  background: rgba(0,0,0,0.2); border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+button, select {
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+  color: #fff; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+  font-size: 0.9em; transition: all 0.15s; margin: 2px;
+}
+button:hover, select:hover { background: rgba(255,255,255,0.2); }
+button:active { transform: scale(0.96); }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+button:disabled:active { transform: none; }
+#status { color: #666; font-size: 0.75em; margin-top: 6px; text-align: center; }
+#status.ok { color: #00ff88; }
+#status.raw { color: #ffaa00; }
+#status.set { color: #00d4ff; }
+#catchup { color: #555; font-size: 0.65em; margin-top: 2px; }
+#rmsNoise { color: #666; font-size: 0.7em; margin-top: 4px; text-align: center; }
+.gain-row, .osr-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>CMJ 测力台</h1>
+
+<div class='card'>
+  <div class='grid'>
+    <div><div class='label'>CH1 左上</div><div class='val' id='c0'>0.00</div><div class='raw' id='r0'>raw: 0.00</div></div>
+    <div><div class='label'>CH4 右上</div><div class='val' id='c3'>0.00</div><div class='raw' id='r3'>raw: 0.00</div></div>
+    <div><div class='label'>CH2 左下</div><div class='val' id='c1'>0.00</div><div class='raw' id='r1'>raw: 0.00</div></div>
+    <div><div class='label'>CH3 右下</div><div class='val' id='c2'>0.00</div><div class='raw' id='r2'>raw: 0.00</div></div>
+  </div>
+</div>
+
+<div class='card'>
+  <div class='grid'>
+    <div><div class='label'>总电压 (uV)</div><div class='val' id='tot'>0</div><div class='raw' id='totAvg'>avg: 0</div></div>
+    <div><div class='label'>重心 X (cm)</div><div class='val' id='cx'>30.0</div><div class='raw' id='cxAvg'>avg: 30.0</div></div>
+    <div><div class='label'>重心 Y (cm)</div><div class='val' id='cy'>25.0</div><div class='raw' id='cyAvg'>avg: 25.0</div></div>
+    <div><div class='label'>FPS</div><div class='val' id='fps'>0</div><div class='raw' id='drdyFreq'>-- Hz</div></div>
+  </div>
+  <div class='gain-row'>
+    <span style='color:#888;font-size:0.8em;'>PGA 增益:</span>
+    <select id='gainSel' onchange='setGain(this.value)'>
+      <option value='1'>1x</option>
+      <option value='2'>2x</option>
+      <option value='4'>4x</option>
+      <option value='8'>8x</option>
+      <option value='16'>16x</option>
+      <option value='32' selected>32x</option>
+      <option value='64'>64x</option>
+      <option value='128'>128x</option>
+    </select>
+    <span id='gainDisp' style='color:#00d4ff;font-size:0.8em;'>当前: 32x</span>
+  </div>
+  <div class='osr-row'>
+    <span style='color:#888;font-size:0.8em;'>ADC 采样率:</span>
+    <select id='osrSel' onchange='setOsr(this.value)'>
+      <option value='16384' selected>250 SPS</option>
+      <option value='8192'>500 SPS</option>
+      <option value='4096'>1 kSPS</option>
+      <option value='2048'>2 kSPS</option>
+      <option value='1024'>4 kSPS</option>
+      <option value='512'>8 kSPS</option>
+      <option value='256'>16 kSPS</option>
+      <option value='128'>32 kSPS</option>
+      <option value='64'>64 kSPS</option>
+    </select>
+    <span id='osrDisp' style='color:#00d4ff;font-size:0.8em;'>当前: 250SPS</span>
+  </div>
+</div>
+
+<div class='card' style='display:flex; justify-content:center; flex-wrap:wrap;'>
+  <canvas id='cop' width='300' height='250'></canvas>
+  <div style='width:100%; text-align:center; margin-top:8px;'>
+    <button id='tareBtn' onclick='sendTare()' disabled>归零 (Tare)</button>
+  </div>
+</div>
+
+<div class='card'>
+  <div style='text-align:center; margin-bottom:6px; color:#888; font-size:0.8em;'>力-时间曲线 (最近 5 秒)</div>
+  <canvas id='forceChart' width='340' height='160'></canvas>
+</div>
+
+<div id='status'>正在连接...</div>
+<div id='catchup'>追赶计数: 0</div>
+<div id='rmsNoise'>RMS 噪声 (1秒 / 50点): CH1 0.0 uV | CH2 0.0 uV | CH3 0.0 uV | CH4 0.0 uV | 总电压 0.0 uV</div>
+
+<script>
+var ws = new WebSocket('ws://' + window.location.host + '/ws');
+var statusEl = document.getElementById('status');
+var fpsEl = document.getElementById('fps');
+var gainDisp = document.getElementById('gainDisp');
+var osrDisp = document.getElementById('osrDisp');
+var drdyFreqEl = document.getElementById('drdyFreq');
+var tareBtn = document.getElementById('tareBtn');
+var canvas = document.getElementById('cop');
+var ctx = canvas.getContext('2d');
+var fCanvas = document.getElementById('forceChart');
+var fCtx = fCanvas.getContext('2d');
+var frameTimes = [];
+var forceHistory = new Array(250).fill(0); /* 50Hz * 5s */
+
+var sensors = [
+  {x: 25, y: 25, n: 1},
+  {x: 25, y: 225, n: 2},
+  {x: 275, y: 225, n: 3},
+  {x: 275, y: 25, n: 4}
+];
+
+function drawCop(cx, cy) {
+  ctx.clearRect(0, 0, 300, 250);
+  ctx.strokeStyle = '#00d4ff'; ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, 300, 250);
+  ctx.strokeStyle = 'rgba(0,212,255,0.3)'; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(25, 25, 250, 200);
+  ctx.setLineDash([]);
+
+  sensors.forEach(s => {
+    ctx.beginPath(); ctx.arc(s.x, s.y, 5, 0, Math.PI*2);
+    ctx.fillStyle = '#00ff88'; ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif';
+    ctx.fillText(s.n, s.x + 8, s.y + 3);
+  });
+
+  var px = cx * 5;
+  var py = (50 - cy) * 5;
+  ctx.beginPath(); ctx.arc(px, py, 10, 0, Math.PI*2);
+  ctx.fillStyle = '#ff4444'; ctx.fill();
+  ctx.strokeStyle = '#ff8888'; ctx.lineWidth = 2; ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(px - 14, py); ctx.lineTo(px + 14, py);
+  ctx.moveTo(px, py - 14); ctx.lineTo(px, py + 14);
+  ctx.strokeStyle = 'rgba(255,68,68,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+function drawForceChart() {
+  fCtx.clearRect(0, 0, 340, 160);
+  fCtx.strokeStyle = 'rgba(255,255,255,0.1)';
+  fCtx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) {
+    var y = 140 - i * 35;
+    fCtx.beginPath(); fCtx.moveTo(30, y); fCtx.lineTo(330, y); fCtx.stroke();
+  }
+  fCtx.fillStyle = '#888'; fCtx.font = '10px sans-serif';
+  fCtx.fillText('0s', 30, 155);
+  fCtx.fillText('5s', 320, 155);
+
+  if (forceHistory.length < 2) return;
+
+  var maxVal = Math.max(...forceHistory, 100);
+  fCtx.strokeStyle = '#00ff88'; fCtx.lineWidth = 2;
+  fCtx.beginPath();
+  for (var i = 0; i < forceHistory.length; i++) {
+    var x = 30 + (i / (forceHistory.length - 1)) * 300;
+    var y = 140 - (forceHistory[i] / maxVal) * 140;
+    if (i === 0) fCtx.moveTo(x, y);
+    else fCtx.lineTo(x, y);
+  }
+  fCtx.stroke();
+
+  fCtx.fillStyle = '#00ff88';
+  fCtx.fillText('Max: ' + maxVal.toFixed(1) + ' uV', 260, 15);
+}
+
+function sendTare() {
+  if (tareBtn.disabled) return;
+  if (ws.readyState === WebSocket.OPEN) ws.send('tare');
+}
+
+function setGain(g) {
+  tareBtn.disabled = true;
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send('gain:' + g);
+    gainDisp.innerText = '切换中...';
+  }
+}
+
+function setOsr(o) {
+  tareBtn.disabled = true;
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send('osr:' + o);
+    osrDisp.innerText = '切换中...';
+  }
+}
+
+ws.onopen = function() {
+  tareBtn.disabled = true;
+  statusEl.innerText = 'WebSocket 已连接 (未归零)';
+  statusEl.className = 'raw';
+};
+
+ws.onmessage = function(e) {
+  var now = performance.now();
+  var parts = e.data.split(';');
+  var raw = parts[0].split(':')[1].split(',');
+  var d   = parts[1].split(':')[1].split(',');
+  var t   = parts[2].split(':')[1];
+  var ta  = parts[3].split(':')[1];
+  var c   = parts[4].split(':')[1].split(',');
+  var ca  = parts[5].split(':')[1].split(',');
+  var s   = parts[6].split(':')[1];
+  var g   = parts[7].split(':')[1];
+  var o   = parts[8].split(':')[1];
+  var f   = parts[9].split(':')[1];
+  var fc  = parts[10].split(':')[1];
+  var noise = parts[11].split(':')[1].split(',');
+  var totalNoise = parts[12].split(':')[1];
+
+  for (var i = 0; i < 4; i++) {
+    document.getElementById('c' + i).innerText = parseFloat(d[i]).toFixed(2);
+    document.getElementById('r' + i).innerText = 'raw: ' + parseFloat(raw[i]).toFixed(2);
+  }
+  document.getElementById('tot').innerText = parseFloat(t).toFixed(1);
+  document.getElementById('totAvg').innerText = 'avg: ' + parseFloat(ta).toFixed(1);
+  document.getElementById('cx').innerText = parseFloat(c[0]).toFixed(2);
+  document.getElementById('cxAvg').innerText = 'avg: ' + parseFloat(ca[0]).toFixed(2);
+  document.getElementById('cy').innerText = parseFloat(c[1]).toFixed(2);
+  document.getElementById('cyAvg').innerText = 'avg: ' + parseFloat(ca[1]).toFixed(2);
+  document.getElementById('drdyFreq').innerText = parseFloat(f).toFixed(1) + ' Hz';
+  document.getElementById('catchup').innerText = '追赶计数: ' + parseInt(fc);
+  document.getElementById('rmsNoise').innerText = 'RMS 噪声 (1秒 / 50点): ' +
+    'CH1 ' + parseFloat(noise[0]).toFixed(1) + ' uV | ' +
+    'CH2 ' + parseFloat(noise[1]).toFixed(1) + ' uV | ' +
+    'CH3 ' + parseFloat(noise[2]).toFixed(1) + ' uV | ' +
+    'CH4 ' + parseFloat(noise[3]).toFixed(1) + ' uV | ' +
+    '总电压 ' + parseFloat(totalNoise).toFixed(1) + ' uV';
+  gainDisp.innerText = '当前: ' + g + 'x';
+  document.getElementById('gainSel').value = g;
+  var sps = 4096000 / parseInt(o);
+  osrDisp.innerText = '当前: ' + (sps >= 1000 ? (sps/1000).toFixed(1) + 'k' : sps) + 'SPS';
+  document.getElementById('osrSel').value = o;
+
+  var totalF = parseFloat(t);
+  forceHistory.shift();
+  forceHistory.push(totalF);
+
+  drawCop(parseFloat(c[0]), parseFloat(c[1]));
+  drawForceChart();
+
+  if (s === 'OK') {
+    statusEl.innerText = '已归零 - 运行中';
+    statusEl.className = 'ok';
+    tareBtn.disabled = false;
+  } else if (s === 'READY') {
+    statusEl.innerText = '数据稳定 - 可以归零';
+    statusEl.className = 'raw';
+    tareBtn.disabled = false;
+  } else {
+    statusEl.innerText = '数据预热中 - 建议等待后归零';
+    statusEl.className = 'raw';
+    tareBtn.disabled = true;
+  }
+
+  frameTimes.push(now);
+  var cutoff = now - 1000;
+  while (frameTimes.length > 0 && frameTimes[0] < cutoff) frameTimes.shift();
+  fpsEl.innerText = frameTimes.length.toFixed(0);
+};
+
+ws.onclose = function() {
+  statusEl.innerText = '连接已断开';
+  statusEl.className = '';
+};
+</script>
+</body>
+</html>

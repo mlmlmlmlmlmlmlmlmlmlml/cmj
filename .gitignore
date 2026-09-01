@@ -1,0 +1,11 @@
+# Local Wi-Fi credentials
+main/wifi_config.h
+
+# ESP-IDF build output and local configuration
+build/
+.cache/
+sdkconfig
+sdkconfig.old
+
+# macOS
+.DS_Store
